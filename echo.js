@@ -8,7 +8,8 @@ const path = require("path");
 
 const app = express();
 app.use(express.json());
-app.use(bodyParser.json());
+//app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true })); // Parse URL-encoded body
 app.use(express.static(path.join(__dirname))); // Serve files in the current directory
 
 const server = http.createServer(app);
