@@ -10,7 +10,7 @@
       const token = "df85835c45cfcb25eab796f56eaa2047fd0039aeb6582ba1cdbdb774c7945344";
 
       // Connect to the WebSocket server
-      const socket = io("https://sms-gw-echo.wolf-dev.tn", {
+      const socket = io("http://localhost:3000", {
         path: "/connect",
         transports: ["websocket"],
         auth: {
