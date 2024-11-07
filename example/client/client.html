@@ -7,10 +7,10 @@
     <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
     <script>
       // Assuming you have the token available (for example, from localStorage or a variable)
-      const token = "...";
+      const token = "df85835c45cfcb25eab796f56eaa2047fd0039aeb6582ba1cdbdb774c7945344";
 
       // Connect to the WebSocket server
-      const socket = io("http://localhost:3000", {
+      const socket = io("https://sms-gw-echo.wolf-dev.tn", {
         path: "/connect",
         transports: ["websocket"],
         auth: {

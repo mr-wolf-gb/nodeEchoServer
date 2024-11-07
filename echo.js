@@ -8,8 +8,7 @@ const path = require("path");
 
 const app = express();
 app.use(express.json());
-//app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true })); // Parse URL-encoded body
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/", express.static(path.join(__dirname, "public")));
 
 const server = http.createServer(app);
@@ -39,6 +38,7 @@ io.use(async (socket, next) => {
     if (validToken) {
       socket.token = token;
       connectedClients[socket.id] = socket;
+      socket.join(token); // Join a room with the name of the token
       return next();
     } else {
       return next(new Error("Invalid token"));
@@ -49,39 +49,41 @@ io.use(async (socket, next) => {
 });
 
 io.on("connection", (socket) => {
-  console.log(`User connected with ID: ${socket.id}`);
+  console.log(`User connected with ID: ${socket.id} and joined room: ${socket.token}`);
 
-  // Listen for the "status" event sent from the client
   socket.on("status", async (onlineId, callback) => {
-    console.log(`Received status check for online ID: ${onlineId}`);
-    // Check if the socket ID exists in connectedClients
     const isConnected = !!connectedClients[onlineId];
-    // Send the connection status back to the client
     callback(isConnected);
   });
 
-  // Broadcast message to all clients when a message is received
   socket.on("notify", (data) => {
     console.log(`Received notify event from ${socket.id}:`, data);
-    // Broadcast the data to all connected clients except the sender
+
     if (data.name && data.content) {
-      socket.broadcast.emit(data.name, data.content);
+      socket.to(socket.token).emit(data.name, data.content); // Emit only to clients in the same token room
     } else {
-      socket.broadcast.emit("notify", data);
+      const isVolatile = data.event_volatile === true || data.event_volatile === "1" || data.event_volatile === 1;
+      if (data.event_name && data.event_content) {
+        if (isVolatile) {
+          socket.to(socket.token).volatile.emit(data.event_name, data.event_content); // Volatile emit
+        } else {
+          socket.to(socket.token).emit(data.event_name, data.event_content); // Non-volatile emit
+        }
+      } else {
+        socket.to(socket.token).emit("notify", data); // Emit only to clients in the same token room
+      }
     }
   });
 
-  // Example of handling 'ping' and sending 'pong' back to all clients
   socket.on("ping", () => {
     console.log(`Received ping from ${socket.id}`);
     socket.emit("pong", { message: "pong" });
   });
 
-  // Handle disconnect
   socket.on("disconnect", () => {
     console.log(`User disconnected with ID: ${socket.id}`);
     delete connectedClients[socket.id];
-    socket.broadcast.emit("offline", socket.id);
+    socket.to(socket.token).emit("offline", socket.id);
   });
 });
 
@@ -96,7 +98,7 @@ async function verifyToken(token) {
 }
 
 function generateNewToken() {
-  return crypto.randomBytes(32).toString("hex"); // Generates a 64-character hex string
+  return crypto.randomBytes(32).toString("hex");
 }
 
 app.post("/token", (req, res) => {
@@ -107,8 +109,8 @@ app.post("/token", (req, res) => {
   }
 
   const token = generateNewToken();
-
   const sql = "INSERT INTO tokens (purchase_code, site_url, token) VALUES (?, ?, ?)";
+
   db.query(sql, [purchase_code, site_url, token], (err, result) => {
     if (err) {
       console.error("Database error:", err);
@@ -124,7 +126,6 @@ app.post("/check", async (req, res) => {
 
   try {
     const [rows] = await db.promise().query("SELECT * FROM tokens WHERE purchase_code = ? AND token = ?", [purchase_code, token]);
-
     if (rows.length > 0) {
       res.json({ status: 200, message: "Token is valid" });
     } else {
@@ -153,36 +154,54 @@ app.post("/delete", async (req, res) => {
   }
 });
 
-// Add the /notify endpoint
 app.post("/notify", (req, res) => {
   const { token, event_name, event_content, event_volatile, name, content } = req.body;
 
-  if (name && content) {
-    io.emit(name, content);
-  } else {
-    const payload = {
-      event_name,
-      event_content,
-      event_volatile: event_volatile || false,
-    };
-
-    io.emit("notify", payload); // Broadcast to all clients
-    res.json({ status: 200, message: "Notification sent successfully" });
-  }
-});
-
-// Add the /status endpoint
-app.post("/status", (req, res) => {
-  const { token, socket_id } = req.body;
-
-  // Verify token
   verifyToken(token)
     .then((isValid) => {
       if (!isValid) {
         return res.status(403).json({ status: 403, message: "Invalid token" });
       }
 
-      // Check if the client with the given socket_id is connected
+      // Emit based on provided event information
+      if (name && content) {
+        // Send to clients in the same token room, using `name` as the event name
+        io.to(token).emit(name, content);
+      } else {
+        // Convert `event_volatile` to a boolean for easier checking
+        const isVolatile = event_volatile === true || event_volatile === "1" || event_volatile === 1;
+        if (event_name && event_content) {
+          if (isVolatile) {
+            io.to(token).volatile.emit(event_name, event_content); // Volatile emit
+          } else {
+            io.to(token).emit(event_name, event_content); // Non-volatile emit
+          }
+        } else {
+          io.to(token).emit("notify", {
+            event_name,
+            event_content,
+            event_volatile: isVolatile,
+          });
+        }
+      }
+
+      res.json({ status: 200, message: "Notification sent successfully" });
+    })
+    .catch((error) => {
+      console.error("Error verifying token:", error);
+      res.status(500).json({ status: 500, message: "Token verification failed" });
+    });
+});
+
+app.post("/status", (req, res) => {
+  const { token, socket_id } = req.body;
+
+  verifyToken(token)
+    .then((isValid) => {
+      if (!isValid) {
+        return res.status(403).json({ status: 403, message: "Invalid token" });
+      }
+
       const isConnected = !!connectedClients[socket_id];
       res.json({
         status: 200,
